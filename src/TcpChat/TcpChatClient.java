@@ -17,10 +17,10 @@ public class TcpChatClient {
     // odczytanie nicku oraz proba autentyfikacji na serwerze
     private static String getNick(BufferedReader in, PrintWriter out) throws IOException {
         System.out.print("Enter your nick: ");
-        String msg = stdIn.readLine();
-        out.println("NICK " + msg);
+        String nick = stdIn.readLine();
+        out.println("NICK " + nick);
         String serverResponse = in.readLine();
-        if ("SERVER: OK".equals(serverResponse)) return msg;
+        if ("SERVER: OK".equals(serverResponse)) return nick;
         System.out.println(serverResponse);
         return getNick(in, out);
     }

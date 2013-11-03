@@ -1,85 +1,99 @@
 package UdpChat;
 
 import java.io.BufferedReader;
-import java.io.IOException;
 import java.io.InputStreamReader;
-import java.io.PrintWriter;
-import java.net.Socket;
-import java.net.UnknownHostException;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.util.Scanner;
 
-public class UdpChatClient {
-    private static final int PORT = 6789; /* PORT to connect to */
-    private static final String HOST = "localhost"; /* HOST to connect to */
+class MessageSender implements Runnable {
+    public final static int PORT = 6789;
+    private DatagramSocket socket;
+    private String hostname;
+    private String nick;
 
-    private static BufferedReader stdIn;
-    private static String nick;
-
-    // odczytanie nicku oraz proba autentyfikacji na serwerze
-    private static String getNick(BufferedReader in, PrintWriter out) throws IOException {
-        System.out.print("Enter your nick: ");
-        String msg = stdIn.readLine();
-        out.println("NICK " + msg);
-        String serverResponse = in.readLine();
-        if ("SERVER: OK".equals(serverResponse)) return msg;
-        System.out.println(serverResponse);
-        return getNick(in, out);
+    MessageSender(DatagramSocket socket, String hostname, String nick) {
+        this.socket = socket;
+        this.hostname = hostname;
+        this.nick = nick;
     }
 
-    public static void main(String[] args) throws IOException {
+    private void sendMessage(String m) throws Exception {
+        String message = nick + "|" + m;
+        byte buf[] = message.getBytes();
+        InetAddress address = InetAddress.getByName(hostname);
+        DatagramPacket packet = new DatagramPacket(buf, buf.length, address, PORT);
+        socket.send(packet);
+    }
 
-        Socket server = null;
-
-        try {
-            server = new Socket(HOST, PORT);
-        } catch (UnknownHostException e) {
-            System.err.println(e);
-            System.exit(1);
-        }
-
-        stdIn = new BufferedReader(new InputStreamReader(System.in));
-
-        // output stream z serwera
-        PrintWriter out = new PrintWriter(server.getOutputStream(), true);
-        // input stream z serwera
-        BufferedReader in = new BufferedReader(new InputStreamReader(
-                server.getInputStream()));
-
-        // proba uwierzytelnienia nicka (parametry in i out
-        // sa odpowiedzialne za wyslanie pytania do serwera,
-        // oraz czekanie na odpowiedz
-        nick = getNick(in, out);
-
-        // Watek odpoweidzialny za odczytywanie wiadomosci z serwera
-        ServerConn sc = new ServerConn(server);
-        Thread t = new Thread(sc);
-        t.start();
-
-        String msg;
-        // petla, w ktorej odczytywane sa wiadomosci z stdIn, oraz wysylane do serwera
-        while ((msg = stdIn.readLine()) != null) {
-            out.println(msg);
+    public void run() {
+        boolean connected = false;
+        do {
+            try {
+                sendMessage("User Connected");
+                connected = true;
+            } catch (Exception e) {
+                System.out.println("Something wrong");
+            }
+        } while (!connected);
+        BufferedReader in = new BufferedReader(new InputStreamReader(System.in));
+        while (true) {
+            try {
+                while (!in.ready()) {
+                    Thread.sleep(100);
+                }
+                sendMessage(in.readLine());
+            } catch (Exception e) {
+                System.err.println(e);
+            }
         }
     }
 }
 
-class ServerConn implements Runnable {
-    private BufferedReader in = null;
+class MessageReceiver implements Runnable {
+    DatagramSocket sock;
+    byte buf[];
 
-    public ServerConn(Socket server) throws IOException {
-        //input stream z serwera
-        in = new BufferedReader(new InputStreamReader(
-                server.getInputStream()));
+    MessageReceiver(DatagramSocket s) {
+        sock = s;
+        buf = new byte[1024];
     }
 
     public void run() {
-        String msg;
-        try {
-            // petla, ktora odczytuje wiadomosci z serwera i wypisuje je
-            while ((msg = in.readLine()) != null) {
-                System.out.println(msg);
+        while (true) {
+            try {
+                DatagramPacket packet = new DatagramPacket(buf, buf.length);
+                sock.receive(packet);
+                String received = new String(packet.getData(), 0, packet.getLength());
+                System.out.println(received);
+            } catch (Exception e) {
+                System.err.println(e);
             }
-        } catch (IOException e) {
-            System.err.println(e);
         }
+    }
+}
+
+public class UdpChatClient {
+    static Scanner inputScanner = new Scanner(System.in);
+    private static String nick;
+
+    public static void main(String args[]) throws Exception {
+        String host = "localhost";
+        DatagramSocket socket = new DatagramSocket();
+
+        System.out.print("Enter your nick: ");
+        nick = inputScanner.nextLine();
+        System.out.println("Your nick: " + nick);
+
+        // Wywołanie konstruktorów
+        MessageReceiver messageReceiver = new MessageReceiver(socket);
+        MessageSender messageSender = new MessageSender(socket, host, nick);
+        // Tworzenie wątków
+        Thread messageReceiverThread = new Thread(messageReceiver);
+        Thread messageSenderThread = new Thread(messageSender);
+        // Wystartowanie wątków
+        messageReceiverThread.start();
+        messageSenderThread.start();
     }
 }

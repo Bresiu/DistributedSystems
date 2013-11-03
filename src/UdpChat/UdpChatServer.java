@@ -1,164 +1,90 @@
 package UdpChat;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
-import java.net.ServerSocket;
-import java.net.Socket;
-import java.util.Hashtable;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 
-public class UdpChatServer {
+public class UdpChatServer extends Thread {
     private static final int PORT = 6789;
+    private final static int BUFFER = 1024;
 
-    public static void main(String[] args) throws IOException {
+    // Nasluchiwanie na porcie
+    private DatagramSocket socket = null;
+    // Lista z adresami klientow
+    private ArrayList<InetAddress> clientAddresses;
+    // List z portami klientow
+    private ArrayList<Integer> clientPorts;
+    // Lista z id klientow
+    private HashSet<String> existingClients;
 
-        // Nasluchiwanie na porcie
-        ServerSocket server = null;
+    public UdpChatServer() throws IOException {
         try {
-            server = new ServerSocket(PORT);
+            socket = new DatagramSocket(PORT);
         } catch (IOException e) {
             System.err.println("Could not listen on port: " + PORT);
             System.err.println(e);
             System.exit(1);
         }
-
-        // Akceptacja klienta
-        Socket client = null;
-        while (true) {
-            try {
-                client = server.accept();
-            } catch (IOException e) {
-                System.err.println("Accept failed.");
-                System.err.println(e);
-                System.exit(1);
-            }
-            // Watek odpowiedzialny za komunikacje z klientem
-            Thread t = new Thread(new ClientConn(client));
-            t.start();
-        }
-    }
-}
-
-class ChatServerProtocol {
-    private String nick;
-    private ClientConn conn;
-
-    // Tu bedziemy trzymali nicki klientow podlaczonych do serwera
-    private static Hashtable<String, ClientConn> nicks =
-            new Hashtable<String, ClientConn>();
-
-    private static final String msg_OK = "OK";
-    private static final String msg_NICK_IN_USE = "NICK IN USE";
-    private static final String msg_SPECIFY_NICK = "SPECIFY NICK";
-    private static final String msg_INVALID = "INVALID COMMAND";
-    private static final String msg_SEND_FAILED = "FAILED TO SEND";
-
-    // Dodaje nick do hashtable, zwraca false, jezeli nick juz sie w niej znajduje
-    private static boolean add_nick(String nick, ClientConn c) {
-        if (nicks.containsKey(nick)) {
-            return false;
-        } else {
-            nicks.put(nick, c);
-            return true;
-        }
-    }
-
-    public ChatServerProtocol(ClientConn c) {
-        nick = null;
-        conn = c;
-    }
-
-    private void log(String msg) {
-        System.err.println(msg);
-    }
-
-    public boolean isAuthenticated() {
-        return !(nick == null);
-    }
-
-    // Autentykacja
-    // msg_OK - jest autentyfikacja
-    // msg_NICK_IN_USE - podany nick jest w użyciu
-    // msg_SPECIFY_NICK - wiadomosc nie zaczyna sie od NICK
-    private String authenticate(String msg) {
-        if (msg.startsWith("NICK")) {
-            String tryNick = msg.substring(5);
-            if (add_nick(tryNick, this.conn)) {
-                log("Nick " + tryNick + " joined.");
-                this.nick = tryNick;
-                return msg_OK;
-            } else {
-                return msg_NICK_IN_USE;
-            }
-        } else {
-            return msg_SPECIFY_NICK;
-        }
-    }
-
-    // Wyslij wiadomosc do odbiorcy
-    private boolean sendMsg(String recipient, String msg) {
-        if (nicks.containsKey(recipient)) {
-            ClientConn c = nicks.get(recipient);
-            c.sendMsg(nick + ": " + msg);
-            return true;
-        } else {
-            return false;
-        }
-    }
-
-    // Przetwarzanie wiadomosci od klienta
-    public String process(String msg) {
-        if (!isAuthenticated())
-            return authenticate(msg);
-
-        String[] msg_parts = msg.split(" ", 3);
-        String msg_type = msg_parts[0];
-
-        if (msg_type.equals("MSG")) {
-            if (msg_parts.length < 3) return msg_INVALID;
-            if (sendMsg(msg_parts[1], msg_parts[2])) return msg_OK;
-            else return msg_SEND_FAILED;
-        } else {
-            return msg_INVALID;
-        }
-    }
-}
-
-class ClientConn implements Runnable {
-    private Socket client;
-    private BufferedReader in = null;
-    private PrintWriter out = null;
-
-    ClientConn(Socket client) {
-        this.client = client;
-        try {
-            // input stream do klienta
-            in = new BufferedReader(new InputStreamReader(
-                    client.getInputStream()));
-            // output stream do klienta
-            out = new PrintWriter(client.getOutputStream(), true);
-        } catch (IOException e) {
-            System.err.println(e);
-            return;
-        }
+        // Inicjalizacja list
+        clientAddresses = new ArrayList<InetAddress>();
+        clientPorts = new ArrayList<Integer>();
+        existingClients = new HashSet<String>();
     }
 
     public void run() {
-        String msg, response;
-        ChatServerProtocol protocol = new ChatServerProtocol(this);
-        try {
-            // petla czytajaca linnie od klienta i przekazujaca odpowiedz do klienta
-            while ((msg = in.readLine()) != null) {
-                response = protocol.process(msg);
-                out.println("SERVER: " + response);
+        byte[] buf = new byte[BUFFER];
+        while (true) {
+            try {
+                // wypelnienie zerami
+                Arrays.fill(buf, (byte) 0);
+                // tworzymy nowy datagram
+                DatagramPacket datagramPacket = new DatagramPacket(buf, buf.length);
+                // przechwycamy do niego bajty z socketu
+                socket.receive(datagramPacket);
+
+                // Tworzymy String z tablicy bajtow
+                String content = new String(buf);
+
+                // Wyciagamy InetAddress z datagtamu
+                InetAddress clientAddress = datagramPacket.getAddress();
+                // Wyciagamy port klienta z datagramu
+                int clientPort = datagramPacket.getPort();
+
+                // Tworzymy id klienta
+                // String id = clientAddress.toString() + "," + clientPort;
+                String id = content.substring(0, content.indexOf("|"));
+                String message = content.substring(content.indexOf("|")+1);
+
+                // Jezeli id nie istnieje w naszej liscie klientow...
+                if (!existingClients.contains(id)) {
+                    // dodajemy id, port i adres klienta do list
+                    existingClients.add(id);
+                    clientPorts.add(clientPort);
+                    clientAddresses.add(clientAddress);
+                }
+
+                System.out.println(id + " : " + message);
+
+                byte[] data = (id + " : " + message).getBytes();
+                // Wysyłamy do wszystkich uzytkownikow wiadomosc
+                for (int i = 0; i < clientAddresses.size(); i++) {
+                    InetAddress cl = clientAddresses.get(i);
+                    int cp = clientPorts.get(i);
+                    datagramPacket = new DatagramPacket(data, data.length, cl, cp);
+                    socket.send(datagramPacket);
+                }
+            } catch (Exception e) {
+                System.err.println(e);
             }
-        } catch (IOException e) {
-            System.err.println(e);
         }
     }
 
-    public void sendMsg(String msg) {
-        out.println(msg);
+    public static void main(String[] args) throws IOException {
+        UdpChatServer s = new UdpChatServer();
+        s.start();
     }
 }
